@@ -5,7 +5,6 @@ use crate::lsp_item::LspItem;
 use mlua::prelude::*;
 use mlua::FromLua;
 use mlua::Lua;
-use std::cmp::Reverse;
 use std::collections::HashSet;
 
 #[derive(Clone, Hash)]
@@ -111,35 +110,45 @@ pub fn fuzzy(
     }
 
     // Sort matches by sort criteria
-    for sort in opts.sorts.iter() {
-        match sort.as_str() {
-            "kind" => {
-                matches.sort_by_key(|mtch| haystack[mtch.index_in_haystack].kind);
-            }
-            "score" => {
-                matches.sort_by_cached_key(|mtch| Reverse(match_scores[mtch.index]));
-            }
-            "label" => {
-                matches.sort_by(|a, b| {
-                    let label_a = haystack[a.index_in_haystack]
-                        .sort_text
-                        .as_ref()
-                        .unwrap_or(&haystack[a.index_in_haystack].label);
-                    let label_b = haystack[b.index_in_haystack]
-                        .sort_text
-                        .as_ref()
-                        .unwrap_or(&haystack[b.index_in_haystack].label);
+    if !opts.sorts.is_empty() {
+        matches.sort_by(|a, b| {
+            let mut order = std::cmp::Ordering::Equal;
+            for sort in &opts.sorts {
+                order = match sort.as_str() {
+                    "kind" => {
+                        haystack[a.index_in_haystack].kind
+                            .partial_cmp(&haystack[b.index_in_haystack].kind)
+                            .unwrap()
+                    },
+                    "score" => {
+                        match_scores[b.index]
+                            .partial_cmp(&match_scores[a.index]).unwrap()
+                    },
+                    "label" => {
+                        let label_a = haystack[a.index_in_haystack]
+                            .sort_text
+                            .as_ref()
+                            .unwrap_or(&haystack[a.index_in_haystack].label);
+                        let label_b = haystack[b.index_in_haystack]
+                            .sort_text
+                            .as_ref()
+                            .unwrap_or(&haystack[b.index_in_haystack].label);
 
-                    // Put anything with an underscore at the end
-                    match (label_a.starts_with('_'), label_b.starts_with('_')) {
-                        (true, false) => std::cmp::Ordering::Greater,
-                        (false, true) => std::cmp::Ordering::Less,
-                        _ => label_a.cmp(label_b),
-                    }
-                });
+                        // Put anything with an underscore at the end
+                        match (label_a.starts_with('_'), label_b.starts_with('_')) {
+                            (true, false) => std::cmp::Ordering::Greater,
+                            (false, true) => std::cmp::Ordering::Less,
+                            _ => label_a.cmp(label_b),
+                        }
+                    },
+                    _ => unreachable!()
+                };
+                if order != std::cmp::Ordering::Equal {
+                    break;
+                }
             }
-            _ => {}
-        }
+            order
+        });
     }
 
     // Grab the top N matches and return the indices
